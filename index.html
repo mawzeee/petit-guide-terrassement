@@ -34,20 +34,20 @@
 <body>
 <div id="stage"></div>
 <header>
-  <div><h1>Le petit guide du grand terrassement</h1><div class="sub">Maquette · A6 · 184 pages · 97 définitions</div></div>
+  <div><h1>Le petit guide du grand terrassement</h1><div class="sub">Maquette · A6 · 160 pages · 97 définitions</div></div>
   <div class="hint">Glissez une page ou cliquez à droite / à gauche<br>Flèches du clavier pour feuilleter</div>
 </header>
 <div class="bar">
   <button id="prev" aria-label="Page précédente">←</button>
   <div class="count" id="count"></div>
-  <input id="seek" type="range" min="0" max="92" step="1" value="0" aria-label="Aller à la page">
+  <input id="seek" type="range" min="0" max="80" step="1" value="0" aria-label="Aller à la page">
   <button id="next" aria-label="Page suivante">→</button>
 </div>
 <div id="loading">Chargement du livre…</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (() => {
-  const PAGES = 184, LEAVES = PAGES / 2;
+  const PAGES = 160, LEAVES = PAGES / 2;
   const W = 1.8, H = 1.8 * 148 / 105, SEG = 36, DT = 0.0011;   // A6 proportions (105 × 148 mm), one leaf ≈ 0.11 mm
   const src = n => `pages/p${String(n).padStart(3, '0')}.jpg`;
 
