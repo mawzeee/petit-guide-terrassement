@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Le petit guide du grand terrassement</title>
+<meta name="description" content="Le petit guide du grand terrassement — maquette feuilletable en 3D.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@400;500&display=swap">
+<style>
+  :root {
+    --ink: #0d0f13; --ink-2: #181b21; --line: #2a2f37; --craie: #faf9f6; --grey: #9a9a92;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--ink); color: var(--craie); font: 14px/1.4 Inter, system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; touch-action: none; cursor: grab; }
+  #stage.dragging { cursor: grabbing; }
+  header { position: fixed; top: 0; left: 0; right: 0; padding: calc(env(safe-area-inset-top, 0px) + 20px) 24px 0; display: flex; justify-content: space-between; align-items: baseline; gap: 16px; pointer-events: none; }
+  h1 { margin: 0; font: 300 clamp(20px, 2.6vw, 30px)/1.05 Fraunces, Georgia, serif; letter-spacing: -0.015em; }
+  .sub { color: var(--grey); font-size: 12.5px; margin-top: 6px; }
+  .hint { color: var(--grey); font-size: 12px; text-align: right; }
+  .bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); display: flex; align-items: center; gap: 12px; background: rgba(24, 27, 33, .82); border: 1px solid var(--line); border-radius: 999px; padding: 6px 8px; backdrop-filter: blur(8px); max-width: calc(100vw - 32px); }
+  .bar button { font: 500 13px Inter, sans-serif; color: var(--craie); background: transparent; border: 0; border-radius: 999px; padding: 8px 12px; cursor: pointer; }
+  .bar button:hover { background: #262a31; }
+  .count { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--grey); min-width: 104px; text-align: center; font-size: 13px; }
+  .count b { color: var(--craie); font-weight: 500; }
+  input[type=range] { width: min(260px, 34vw); accent-color: #faf9f6; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; color: var(--grey); font-size: 13px; pointer-events: none; transition: opacity .6s; }
+  @media (max-width: 640px) { .hint { display: none; } input[type=range] { display: none; } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<header>
+  <div><h1>Le petit guide du grand terrassement</h1><div class="sub">Maquette · 144 pages · 97 définitions</div></div>
+  <div class="hint">Glissez une page ou cliquez à droite / à gauche<br>Flèches du clavier pour feuilleter</div>
+</header>
+<div class="bar">
+  <button id="prev" aria-label="Page précédente">←</button>
+  <div class="count" id="count"></div>
+  <input id="seek" type="range" min="0" max="72" step="1" value="0" aria-label="Aller à la page">
+  <button id="next" aria-label="Page suivante">→</button>
+</div>
+<div id="loading">Chargement du livre…</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const PAGES = 144, LEAVES = PAGES / 2;
+  const W = 1.8, H = 2.3, SEG = 36, DT = 0.0011;       // page 180 × 230 mm, one leaf ≈ 0.11 mm
+  const src = n => `pages/p${String(n).padStart(3, '0')}.jpg`;
+
+  const stage = document.getElementById('stage');
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const lin = h => new THREE.Color(h).convertSRGBToLinear();   // colours are written in sRGB
+  scene.background = lin('#25272b');
+  const camera = new THREE.PerspectiveCamera(22, 1, 0.1, 80);   // a long lens: little distortion, like a product shot
+
+  // light: a soft sky + one warm key from the upper left that casts the turning page's shadow
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a3d44, 0.95));
+  const key = new THREE.DirectionalLight(0xfff6ea, 0.55);
+  key.position.set(-2.4, 5.2, 2.2); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0004; key.shadow.normalBias = 0.015;
+  Object.assign(key.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 0.5, far: 14 });
+  scene.add(key);
+
+  // the desk: a dark surface, with a soft contact shadow under the book
+  const desk = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: lin('#2c2e33'), roughness: 0.95 }));
+  desk.rotation.x = -Math.PI / 2; desk.position.y = -0.002; desk.receiveShadow = true; scene.add(desk);
+  const back0 = desk;
+  const sc = document.createElement('canvas'); sc.width = sc.height = 256;
+  const g = sc.getContext('2d'); const grd = g.createRadialGradient(128, 128, 10, 128, 128, 128);
+  grd.addColorStop(0, 'rgba(0,0,0,0.55)'); grd.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+  const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false }));
+  contact.rotation.x = -Math.PI / 2; contact.position.y = -0.001; scene.add(contact);
+
+  // page edges of each stack: a block whose height follows how many leaves it holds
+  const ec = document.createElement('canvas'); ec.width = 8; ec.height = 256;
+  const eg = ec.getContext('2d'); for (let y = 0; y < 256; y++) { const v = 228 + (y % 3 === 0 ? -14 : (y * 7919 % 9)); eg.fillStyle = `rgb(${v},${v - 3},${v - 10})`; eg.fillRect(0, y, 8, 1); }
+  const edgeTex = new THREE.CanvasTexture(ec); edgeTex.wrapT = THREE.RepeatWrapping;
+  const edgeMat = new THREE.MeshStandardMaterial({ map: edgeTex, roughness: 1 });
+  const plain = new THREE.MeshStandardMaterial({ color: lin('#1a1c20'), roughness: 1 });   // top/bottom: never seen, never striped
+  const blockMats = [edgeMat, edgeMat, plain, plain, edgeMat, edgeMat];
+  const blockR = new THREE.Mesh(new THREE.BoxGeometry(W, 1, H), blockMats), blockL = new THREE.Mesh(blockR.geometry, blockMats);
+  blockR.receiveShadow = blockL.receiveShadow = true; scene.add(blockR, blockL);
+
+  // textures, loaded around the open spread
+  const loader = new THREE.TextureLoader(); const tex = {}; const paper = lin('#d9d6cf');
+  function texture(n, back) {
+    const id = n + (back ? 'b' : 'f');
+    if (tex[id]) return tex[id];
+    const t = loader.load(src(n), () => { needsRender = true; firstLoaded(); });
+    t.encoding = THREE.sRGBEncoding; t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    if (back) { t.wrapS = THREE.RepeatWrapping; t.repeat.x = -1; t.offset.x = 1; }   // a verso reads from the spine outwards
+    return (tex[id] = t);
+  }
+
+  // one leaf = a strip of SEG quads from the spine (x = 0) to the edge, front face up (recto), back face down (verso)
+  function leafGeometry() {
+    const pos = new Float32Array((SEG + 1) * 2 * 3), uv = new Float32Array((SEG + 1) * 2 * 2), idx = [];
+    for (let i = 0; i <= SEG; i++) {
+      const u = i / SEG;
+      uv.set([u, 1, u, 0], i * 4);
+      if (i < SEG) { const a = i * 2, b = a + 1, c = a + 2, d = a + 3; idx.push(a, b, c, c, b, d); }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(idx); return geo;
+  }
+  function shape(geo, ts, te, base) {
+    // the spine side turns by ts, the free edge lags at te: the page bends along a circular arc between the two
+    const p = geo.attributes.position.array, k = (te - ts) / W;
+    for (let i = 0; i <= SEG; i++) {
+      const u = i / SEG * W; let x, y;
+      if (Math.abs(k) < 1e-6) { x = u * Math.cos(ts); y = u * Math.sin(ts); }
+      else { x = (Math.sin(ts + k * u) - Math.sin(ts)) / k; y = (Math.cos(ts) - Math.cos(ts + k * u)) / k; }
+      p.set([x, base + y, -H / 2, x, base + y, H / 2], i * 6);
+    }
+    geo.attributes.position.needsUpdate = true; geo.computeVertexNormals(); geo.computeBoundingSphere();
+  }
+  const leaves = [];
+  for (let k = 0; k < LEAVES; k++) {
+    const geo = leafGeometry();
+    const front = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: paper, roughness: 0.92, side: THREE.FrontSide }));
+    const back = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: paper, roughness: 0.92, side: THREE.BackSide }));
+    scene.add(front, back);
+    leaves.push({ k, geo, front, back, t: 0, from: 0, to: 0, start: 0, dur: 0, loaded: false });
+  }
+  const ease = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+  let flipped = 0;                  // leaves resting on the left
+  let needsRender = true, dragging = null;
+
+  function restY(k, onLeft) { return onLeft ? (k + 1) * DT : (LEAVES - k) * DT; }
+  function place(L) {
+    const t = L.t, onLeft = t >= 1;
+    const y0 = restY(L.k, false), y1 = restY(L.k, true);
+    const ts = Math.PI * ease(t), te = Math.PI * ease(Math.max(0, (t - .14) / .86));
+    shape(L.geo, ts, te, y0 + (y1 - y0) * ease(t) + Math.sin(Math.PI * t) * 0.004);
+    const moving = t > 0 && t < 1;
+    L.front.castShadow = L.back.castShadow = moving;
+    // only the two pages lying open take the turning page's shadow (no acne on the stacks)
+    const recv = !moving && (L.k === flipped || L.k === flipped - 1);
+    if (L.front.receiveShadow !== recv) { L.front.receiveShadow = L.back.receiveShadow = recv; L.front.material.needsUpdate = L.back.material.needsUpdate = true; }
+  }
+  function ensureTextures() {
+    const lo = Math.max(0, flipped - 5), hi = Math.min(LEAVES - 1, flipped + 5);
+    for (let k = lo; k <= hi; k++) {
+      const L = leaves[k]; if (L.loaded) continue; L.loaded = true;
+      L.front.material.map = texture(2 * k + 1, false); L.front.material.color.set(0xffffff); L.front.material.needsUpdate = true;
+      L.back.material.map = texture(2 * k + 2, true); L.back.material.color.set(0xffffff); L.back.material.needsUpdate = true;
+    }
+  }
+  function blocks() {
+    // what is left under the top leaf of each stack, shown as the page block's edge
+    const r = LEAVES - flipped, l = flipped;
+    // the block stays two leaves under the top of its stack, so it never shares a depth with a resting page
+    blockR.visible = r > 2; blockL.visible = l > 2;
+    blockR.scale.y = Math.max(r - 2, .5) * DT; blockR.position.set(W / 2, blockR.scale.y / 2, 0);
+    blockL.scale.y = Math.max(l - 2, .5) * DT; blockL.position.set(-W / 2, blockL.scale.y / 2, 0);
+    edgeTex.repeat.y = 1;
+  }
+
+  // turning: queue one or many leaves, each animated from t to its target
+  const active = new Set();
+  function turnTo(target, quick) {
+    target = Math.max(0, Math.min(LEAVES, target));
+    if (target === flipped) return;
+    const dir = target > flipped ? 1 : -1, n = Math.abs(target - flipped), now = performance.now();
+    const dur = quick || n > 1 ? Math.max(260, 900 - n * 40) : 900, gap = n > 1 ? Math.min(90, 900 / n) : 0;
+    for (let j = 0; j < n; j++) {
+      const k = dir > 0 ? flipped + j : flipped - 1 - j, L = leaves[k];
+      L.from = L.t; L.to = dir > 0 ? 1 : 0; L.start = now + j * gap; L.dur = dur * Math.abs(L.to - L.from || 1);
+      active.add(L);
+    }
+    flipped = target; ensureTextures(); blocks(); ui(); needsRender = true;
+  }
+
+  // camera: the book centred whether closed, open or finished; a light parallax with the pointer
+  const camTarget = new THREE.Vector3(), camGoal = new THREE.Vector3(); let px = 0, py = 0;
+  function frame() {
+    const closedFront = flipped === 0, closedBack = flipped === LEAVES;
+    camGoal.set(closedFront ? W / 2 : closedBack ? -W / 2 : 0, 0, 0.1);
+  }
+  function resize() {
+    const w = innerWidth, h = innerHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); needsRender = true;
+  }
+  addEventListener('resize', resize);
+  addEventListener('pointermove', e => { px = (e.clientX / innerWidth - .5); py = (e.clientY / innerHeight - .5); needsRender = true; });
+
+  // input: click a half, drag a page, keys, buttons, slider
+  function sideOf(e) { return e.clientX > innerWidth / 2 ? 1 : -1; }
+  stage.addEventListener('pointerdown', e => {
+    const s = sideOf(e);
+    const k = s > 0 ? flipped : flipped - 1;
+    if (k < 0 || k >= LEAVES) return;
+    dragging = { s, k, x0: e.clientX, moved: false, L: leaves[k] };
+    stage.setPointerCapture(e.pointerId); stage.classList.add('dragging');
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = (e.clientX - dragging.x0) / (innerWidth * .45);
+    if (Math.abs(e.clientX - dragging.x0) > 6) dragging.moved = true;
+    if (!dragging.moved) return;
+    const L = dragging.L; active.delete(L);
+    L.t = dragging.s > 0 ? Math.min(1, Math.max(0, -dx)) : Math.min(1, Math.max(0, 1 - dx));
+    if (dragging.s > 0) ensureTextures();
+    needsRender = true;
+  });
+  function endDrag(e) {
+    if (!dragging) return;
+    const d = dragging; dragging = null; stage.classList.remove('dragging');
+    if (!d.moved) { turnTo(flipped + d.s); return; }
+    const L = d.L, done = d.s > 0 ? L.t > .35 : L.t < .65;
+    if (done) { flipped += d.s; blocks(); ui(); ensureTextures(); }
+    L.from = L.t; L.to = (d.s > 0) === done ? 1 : 0; if (!done) L.to = d.s > 0 ? 0 : 1;
+    L.start = performance.now(); L.dur = 500 * Math.abs(L.to - L.from) + 120; active.add(L); needsRender = true;
+  }
+  stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+  addEventListener('keydown', e => { if (e.key === 'ArrowRight') turnTo(flipped + 1); if (e.key === 'ArrowLeft') turnTo(flipped - 1); });
+  document.getElementById('next').onclick = () => turnTo(flipped + 1);
+  document.getElementById('prev').onclick = () => turnTo(flipped - 1);
+  const seek = document.getElementById('seek');
+  seek.addEventListener('change', () => turnTo(+seek.value, true));
+  const count = document.getElementById('count');
+  function ui() {
+    seek.value = flipped;
+    count.innerHTML = flipped === 0 ? '<b>Couverture</b>' : flipped === LEAVES ? '<b>Dos</b>'
+      : `pages <b>${2 * flipped}–${2 * flipped + 1}</b> / ${PAGES}`;
+  }
+
+  let shown = false;
+  function firstLoaded() { if (shown) return; shown = true; const l = document.getElementById('loading'); l.style.opacity = 0; setTimeout(() => l.remove(), 700); }
+
+  function tick(now) {
+    requestAnimationFrame(tick);
+    for (const L of active) {
+      const a = Math.min(1, Math.max(0, (now - L.start) / L.dur));
+      L.t = L.from + (L.to - L.from) * a;
+      if (a >= 1) { L.t = L.to; active.delete(L); }
+    }
+    frame();
+    camTarget.lerp(camGoal, 0.08);
+    const open = flipped > 0 && flipped < LEAVES, span = (open ? W : W / 2) * 1.14;
+    const hfov = Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect);
+    const dist = Math.max(7.3, span / Math.tan(hfov) * 1.02);   // the whole spread (or the closed book) always fits
+    camera.position.set(camTarget.x + px * 0.28, dist * 0.84 - py * 0.18, camTarget.z + dist * 0.54);
+    camera.lookAt(camTarget.x, 0, camTarget.z - 0.05);
+    const moving = active.size || dragging || Math.abs(camTarget.x - camGoal.x) > 1e-3;
+    if (!moving && !needsRender) return;
+    for (const L of leaves) place(L);
+    contact.scale.set((flipped === 0 || flipped === LEAVES ? W : 2 * W) * 1.25, H * 1.2, 1);
+    contact.position.x = camGoal.x;
+    renderer.render(scene, camera); needsRender = false;
+  }
+  resize(); ensureTextures(); blocks(); ui(); camTarget.set(W / 2, 0, 0.1);
+  requestAnimationFrame(tick);
+})();
+</script>
+
+</body>
+</html>
